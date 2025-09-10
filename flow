@@ -1,0 +1,220 @@
+快速地圖（後端）
+主進入點: apps/meteor/server/main.ts 會啟動設定、服務、EE、最後掛載 REST API
+import { startRestAPI } from '../app/api/server/api';
+...
+await Promise.all([configureServer(settings), registerServices(), startup()]);
+await startRocketChat();
+await startupApp();
+await startRestAPI();
+
+REST 啟動與中介層: apps/meteor/app/api/server/api.ts 使用 Meteor 的 WebApp 接 @rocket.chat/http-router（底層是 Hono）
+(WebApp.rawConnectHandlers as unknown as ReturnType<typeof express>).use(
+  API.api
+    .use(remoteAddressMiddleware)
+    .use(cors(settings))
+    .use(loggerMiddleware(logger))
+    .use(metricsMiddleware({ basePathRegex: new RegExp(/^\/api\/v1\//), api: API.v1, settings, summary: metrics.rocketchatRestApi }))
+    .use(tracerSpanMiddleware)
+    .use(API.v1.router)
+    .use(API.default.router).router,
+);
+
+Router 封裝: Hono ctx 轉換到 Rocket.Chat 的 handler 介面
+export class RocketChatAPIRouter<...> extends Router<...> {
+  protected convertActionToHandler(action: APIActionHandler) {
+    return async (c) => {
+      const queryParams = this.parseQueryParams(c.req);
+      const bodyParams = await this.parseBodyParams({ request: c.req, extra: { bodyParamsOverride: c.var['bodyParams-override'] || {} } });
+      const context = { requestIp: c.get('remoteAddress'), urlParams: c.req.param(), queryParams, bodyParams, request: c.req.raw.clone(), path: c.req.path, response: c.res, route: c.req.routePath };
+      return action.apply(context, [c.req.raw.clone()]);
+    };
+  }
+}
+
+REST endpoints 目錄: apps/meteor/app/api/server/v1/*（例如 users.ts, rooms.ts, chat.ts）
+registerModel('IAnalyticsModel', new AnalyticsRaw(db));
+registerModel('IAppLogsModel', new AppsLogsModel(db));
+...
+registerModel('IEmojiCustomModel', new EmojiCustomRaw(db, trashCollection));
+
+資料層註冊: apps/meteor/server/models.ts 將 @rocket.chat/models（Mongo Raw models）註冊到程式，透過 db 連線
+設定與開關: apps/meteor/server/configuration/*, apps/meteor/app/settings/server；Rate limit、CORS 等在 apps/meteor/app/api/server/middlewares/*
+業務/服務層: apps/meteor/server/services/**（多數網域服務在此），排程在 server/cron/*
+Meteor 方法與訂閱（DDP）: server/methods/*, server/publications/*（非 REST 的即時呼叫）
+最快上手閱讀順序（2-3 小時目標）
+看 apps/meteor/server/main.ts 掌握啟動順序與組件。
+看 apps/meteor/app/api/server/api.ts（掛中介層、API.v1）、router.ts（Hono 封裝）。
+打開一支具體 endpoint（如 apps/meteor/app/api/server/v1/users.ts 或 chat.ts），從 handler 往下追。
+依該 endpoint 追到服務層 apps/meteor/server/services/**，再一路追到資料層（同名 Raw model 於 @rocket.chat/models，註冊在 server/models.ts）。
+查它用到的設定（settings.get/watch）在哪設，快速掃 apps/meteor/app/settings/server 與 server/configuration/*。
+如有背景任務或事件，順手掃 server/cron/*、server/modules/*。
+想比對回傳型別時，看 packages/rest-typings、資料型別看 packages/model-typings/packages/core-typings。
+本機執行（後端開發最簡路徑）
+Node/Yarn 版本固定：root package.json 指定 Node 22.16.0、Yarn 4.9.3（用 corepack 啟用 Yarn 4，或用 Volta/nvm-windows 對版本）
+安裝與跑起來：
+在 repo 根目錄：corepack enable && yarn install
+開後端：yarn dev --filter=@rocket.chat/meteor（或 cd apps/meteor && yarn dev）
+啟動後測試 REST：GET http://localhost:3000/api/v1/info
+可選 Docker（帶外部 Mongo/NATS）：看 docker-compose-local.yml。若走 Docker，Windows 建議 WSL2。
+搜索錦囊（定位程式碼更快）
+找 REST：apps/meteor/app/api/server/v1/ + 搜 API.v1 的路由註冊方式
+找資料存取：先在 @rocket.chat/models 中找對應 Raw，回到 server/models.ts 確認註冊名稱，再搜使用點
+看權限/驗證：apps/meteor/app/api/server/middlewares/authentication.ts、permissions 相關設定於 apps/meteor/app/authorization、packages/core-typings 裡的型別
+看測試當文件：apps/meteor/tests/end-to-end/api/*.ts 與 tests/unit/app/api/server/v1/*（貼近實務用法）
+新增/修改 API 的常見步驟
+在 apps/meteor/app/api/server/v1/ 對應檔案新增 route handler
+從 handler 呼叫 server/services/** 的用例層邏輯
+在服務層使用 @rocket.chat/models 的 Raw model（已由 server/models.ts 註冊）
+若需設定/開關，新增於 apps/meteor/app/settings/server，用 settings.get/watch 讀取
+加上對應單元/整合測試（看現有測試檔案為範本）
+小任務清單（第一天可以完成）
+跑起服務與打通 GET /api/v1/info
+讀一支 endpoint（建議 users.ts 或 chat.ts），追到服務層與資料層
+在同一路徑下加一個輕量查詢（不落 DB 變更），熟悉中介層、型別與回傳格式
+跑對應單元或 e2e 測試，確保對流程理解正確
+如果你告訴我你現在要看哪個領域（例如：使用者、訊息、房間、OAuth、LDAP、Livechat），我可以直接幫你畫出那條端到端呼叫鏈，列出最該看的 3-5 個檔案。
+我已經定位後端入口、REST 掛載流程、Router 封裝與資料層註冊，並列出最快的閱讀順序與本機執行方式。你可以先用 yarn dev --filter=@rocket.chat/meteor 跑起來，再從 v1/users.ts 或 v1/chat.ts 追到服務與 models。
+
+訊息領域（Message domain）地圖
+資料模型（Mongo Raw）
+packages/models/src/models/Messages.ts 定義訊息集合與查詢方法
+export class MessagesRaw extends BaseRaw<IMessage> implements IMessagesModel {
+	constructor(db: Db, trash?: Collection<RocketChatRecordDeleted<IMessage>>) {
+		super(db, 'message', trash);
+	}
+}
+在 apps/meteor/server/models.ts 註冊：registerModel('IMessagesModel', new MessagesRaw(db, trashCollection))
+服務層（業務邏輯）
+apps/meteor/server/services/messages/service.ts 實作送出/更新/刪除/反應/系統訊息、beforeSave hooks
+export class MessageService extends ServiceClassInternal implements IMessageService {
+	protected name = 'message';
+內部會呼叫 sendMessage/updateMessage/deleteMessage 等函式與 @rocket.chat/models 的 Messages/Rooms
+REST API（v1/chat.）
+apps/meteor/app/api/server/v1/chat.ts：涵蓋 chat.sendMessage, chat.update, chat.delete, chat.react, chat.getMessage, chat.search, chat.getPinnedMessages, Thread/Discussion 相關等
+API.v1.addRoute(
+	'chat.sendMessage',
+	{ authRequired: true, validateParams: isChatSendMessageProps },
+	{
+		async post() {
+			if (MessageTypes.isSystemMessage(this.bodyParams.message)) {
+				throw new Error("Cannot send system messages using 'chat.sendMessage'");
+			}
+			const sent = await applyAirGappedRestrictionsValidation(() =>
+				executeSendMessage(this.userId, this.bodyParams.message as Pick<IMessage, 'rid'>, this.bodyParams.previewUrls),
+			);
+刪除訊息：
+API.v1.addRoute(
+	'chat.delete',
+	{ authRequired: true, validateParams: isChatDeleteProps },
+	{
+		async post() {
+			const msg = await Messages.findOneById(this.bodyParams.msgId, { projection: { u: 1, rid: 1 } });
+Meteor methods（即時/互動）
+apps/meteor/server/methods/：messageSearch.ts, readMessages.ts, readThreads.ts, deleteFileMessage.ts, loadHistory.ts
+Publications（訊息歷史/同步）
+apps/meteor/server/publications/messages.ts（被 chat.syncMessages 等使用）
+Streaming / 通知（客戶端即時更新）
+apps/meteor/server/modules/streamer/streamer.module.ts
+apps/meteor/server/modules/notifications/notifications.module.ts
+相關通知在 app/lib/server/lib/notifyListener.ts 等
+型別與 API 規格
+型別：packages/core-typings（IMessage 等）
+REST 型別/驗證：packages/rest-typings（isChat*Props）
+測試參考（當文件看）
+REST 範例：apps/meteor/tests/end-to-end/api/chat.ts
+互動/E2E：apps/meteor/tests/e2e/messaging.spec.ts, message-actions.spec.ts, message-mentions.spec.ts
+建議閱讀順序（訊息相關）
+apps/meteor/app/api/server/v1/chat.ts（從路由理解能力邊界與權限檢查）
+往下鑽 executeSendMessage/updateMessage 等至 apps/meteor/server/services/messages/service.ts（beforeSave hooks、商業規則）
+看 @rocket.chat/models 的 MessagesRaw（查詢與索引設計）
+補充 apps/meteor/server/publications/messages.ts（歷史/同步）、server/methods/*（互動）
+如需即時：modules/streamer/* 與通知管道
+
+chat.sendMessage 端到端呼叫鏈
+路由 (REST)
+POST /api/v1/chat.sendMessage
+API.v1.addRoute(
+  'chat.sendMessage',
+  { authRequired: true, validateParams: isChatSendMessageProps },
+  {
+    async post() {
+      const sent = await applyAirGappedRestrictionsValidation(() =>
+        executeSendMessage(this.userId, this.bodyParams.message as Pick<IMessage, 'rid'>, this.bodyParams.previewUrls),
+      );
+方法 (Method)
+executeSendMessage(uid, message, previewUrls?)
+驗證 thread/ts/size → 取得 user → canSendMessageAsync 權限與加密房保護 → metrics 計數 → 呼叫 sendMessage(...)
+失敗時透過 ephemeral 訊息回報
+export async function executeSendMessage(uid, message, previewUrls?) {
+...
+88:99
+  const room = await canSendMessageAsync(rid, { uid, username: user.username, type: user.type });
+  metrics.messagesSent.inc();
+  return await sendMessage(user, message, room, false, previewUrls);
+...
+105:112
+  void api.broadcast('notify.ephemeralMessage', uid, message.rid, { msg: i18n.t(errorMessage, ...) });
+函式 (送訊息核心)
+sendMessage(user, message, room, upsert=false, previewUrls?)
+驗證/整理訊息 → Apps pre-hooks → URL 解析 → 進入 Service 的 Message.beforeSave → 寫入 DB → Apps post-hooks → afterSave callbacks → 通知/stream
+await validateMessage(...); prepareMessageObject(...);
+if (Apps.self?.isLoaded()) { IPreMessageSentPrevent/Modify/Extend }
+parseUrlsInMessage(message, previewUrls);
+message = await Message.beforeSave({ message, room, user });
+...
+const { insertedId } = await Messages.insertOne(message);
+...
+await afterSaveMessage(message, room);
+void notifyOnMessageChange({ id: message._id });
+void notifyOnRoomChangedById(message.rid);
+
+服務 (Service / BeforeSave pipeline)
+MessageService.beforeSave({ message, room, user })
+聯邦防護 → server mention 處理 → Canned responses → Bad words 過濾 → Markdown 解析 → Spotify 連結 → Jump-to-message 附件 → @all/@here 權限/MAC 檢查
+message = await mentionServer.execute(message);
+message = await this.cannedResponse.replacePlaceholders(...);
+message = await this.badWords.filterBadWords(...);
+message = await this.markdownParser.parseMarkdown(...);
+message = await this.spotify.convertSpotifyLinks(...);
+message = await this.jumpToMessage.createAttachmentForMessageURLs(...);
+await Promise.all([ this.checkMAC.isWithinLimits(...), this.preventMention.preventMention(...), ... ]);
+資料模型 (Model)
+@rocket.chat/models → Messages.insertOne(message) 寫入 message 集合
+const { insertedId } = await Messages.insertOne(message);
+模型定義與索引
+export class MessagesRaw extends BaseRaw<IMessage> implements IMessagesModel {
+  constructor(db: Db, trash?: Collection<RocketChatRecordDeleted<IMessage>>) {
+    super(db, 'message', trash);
+  }
+}
+回呼與房間更新
+afterSaveMessage(message, room) 觸發 callbacks（可能更新房間計數/欄位）
+const data = await callbacks.run('afterSaveMessage', message, { room, uid, roomUpdater });
+if (!roomUpdater && updater.hasChanges()) {
+  await Rooms.updateFromUpdater({ _id: room._id }, updater);
+}
+通知 / Stream topics
+新訊息推送：watch.messages
+export const notifyOnMessageChange = withDbWatcherCheck(async ({ id, data }) => {
+  const message = await getMessageToBroadcast({ id, data });
+  ...
+  void api.broadcast('watch.messages', { message });
+});
+房間變更：watch.rooms
+export const notifyOnRoomChangedById = withDbWatcherCheck(async (ids, clientAction = 'updated') => {
+  const items = Rooms.findByIds(eligibleIds);
+  for await (const item of items) {
+    void api.broadcast('watch.rooms', { clientAction, room: item });
+  }
+});
+例外情況：
+加密房未允許純文字：在 Method 內擲錯
+OTR 訊息：走 api.broadcast('otrMessage', ...)
+送訊息失敗：notify.ephemeralMessage（僅當下使用者）
+回應 (REST)
+最後 REST 回傳為 normalize 過的訊息
+const [message] = await normalizeMessagesForUser([sent], this.userId);
+return API.v1.success({ message });
+總結重點鏈
+Route → executeSendMessage → sendMessage → Message.beforeSave → Messages.insertOne → afterSaveMessage → watch.messages + watch.rooms
+我已把 chat.sendMessage 從 REST 到 DB 與 Stream 的路徑明確列出。需要我同樣整理 chat.update 或 chat.delete 的端到端鏈嗎？
