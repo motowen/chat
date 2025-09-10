@@ -1,0 +1,132 @@
+Rocket.Chat 是一個開源、可擴充的通訊平台，專為安全、即時的協作而設計。此程式庫採用 monorepo 架構，包含 Rocket.Chat 的伺服器、客戶端、微服務，以及共用套件的完整原始碼。
+
+目的
+
+Rocket.Chat 讓組織能夠部署一個可自訂的訊息平台，用於團隊協作、客戶互動，以及與外部系統整合。這個程式碼庫被全球的組織使用，並支援 自我託管 和 雲端部署 兩種模式。
+
+高階系統概覽
+
+Rocket.Chat 採用模組化設計，主要包含以下部分：
+
+核心應用程式：基於 Meteor 的主要應用，負責即時訊息、使用者管理與核心業務邏輯。
+
+共用套件：可重複使用的函式庫、型別定義及 UI 元件。
+
+企業版：額外的微服務與功能，專供企業部署。
+
+部署與 CI/CD：用於建置、測試與部署的腳本與設定。
+
+產品與系統對應
+
+來源：
+
+README.md 18-34
+
+app.json 1-21
+
+package.json 1-87
+
+程式庫結構
+
+Rocket.Chat 的程式庫是一個由 Yarn workspaces 與 Turbo 管理的 monorepo，能有效率地開發、測試與部署多個應用與套件。
+
+Monorepo 架構圖
+
+目錄概覽
+目錄	說明	授權
+apps/meteor/	主要 Meteor 應用程式	MIT
+apps/uikit-playground/	UI Kit 的展示與範例	MIT
+packages/	共用函式庫與 UI 元件	MIT
+ee/	企業版程式碼	專有
+ee/apps/	企業微服務	專有
+ee/packages/	企業專用套件	專有
+
+來源：package.json 1-87、LICENSE 1-32、app.json 1-21
+
+系統架構
+
+Rocket.Chat 由多個相互連結的系統組成，並對應到程式庫中的特定模組。
+
+高階系統架構
+來源：README.md 18-36、app.json 10、package.json 1-87
+
+微服務與內部通訊
+
+來源：package.json 1-87、README.md 18-36、app.json 10
+
+核心組件
+組件	代碼位置	說明
+核心應用程式	apps/meteor/	主要 Meteor 應用，處理業務邏輯
+共用套件	packages/	型別定義、模型、UI 元件
+企業微服務	ee/apps/	授權、線上狀態等服務
+企業套件	ee/packages/	企業專屬功能與整合
+UI Kit	packages/fuselage-ui-kit/	設計系統與 UI 基礎元件
+
+來源：package.json 1-87、README.md 18-36、app.json 1-21
+
+部署選項
+
+Rocket.Chat 支援多種部署模式，以符合不同基礎架構需求。
+
+部署模式圖
+
+系統需求
+元件	需求	來源
+Node.js	package.json 與 .meteor/release 中指定版本	
+MongoDB	CI 與 .houston/metadata.js 中的相容版本	
+記憶體	視部署規模而定	
+儲存空間	視訊息與檔案量而定	
+
+來源：README.md 38-65、app.json 1-21、.houston/metadata.js 19-39、package.json 46-49
+
+發佈管理與 CI/CD
+
+Rocket.Chat 採用結構化的發佈流程，並使用持續整合與部署管線。
+
+發佈與 CI/CD 流程圖
+
+版本管理：由 package.json 的 "version" 欄位控制。
+
+CI/CD 工作流程：定義於 .github/workflows/。
+
+發佈歷史：紀錄於 HISTORY.md。
+
+來源：package.json 1-74、HISTORY.md 1-15、README.md 63-65
+
+擴充性：Apps Engine
+
+Rocket.Chat 提供一個名為 Apps Engine 的擴充框架，讓開發者能建立與整合自訂應用。
+
+Apps Engine 架構
+
+於核心應用中實作，並透過 @rocket.chat/apps-engine 套件公開。
+
+整合點包含 hooks、HTTP 端點、slash 指令。
+
+來源：README.md 76-78、package.json 1-87
+
+技術堆疊
+技術	版本（範例）	用途	來源
+Node.js	22.16.0	伺服器執行環境	package.json, HISTORY.md
+Yarn	4.9.2	套件管理	package.json
+MongoDB	4.4, 5.0, 6.0	資料庫	HISTORY.md
+Meteor	-	應用框架	apps/meteor/
+React	-	UI 函式庫	packages/ui-*
+
+來源：package.json 46-49、HISTORY.md 6-8
+
+結論
+
+Rocket.Chat 是一個完整的通訊平台，擁有模組化架構，具備高度靈活性與擴充性。程式庫以 monorepo 方式組織，方便管理多個組件與相依性。
+
+若需更詳細的子系統資訊，請參考以下頁面：
+
+系統架構 System Architecture
+
+微服務架構 Microservices Architecture
+
+國際化系統 Internationalization System
+
+全通路/即時客服功能 Omnichannel System
+
+端對端加密 End-to-End Encryption
