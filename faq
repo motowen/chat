@@ -1,0 +1,88 @@
+怎麼優化某個查詢 API 的效能？ 或是 你有哪些優化後端系統效能的經驗？請舉例說明。
+先從設計著手 
+先定義我們預期的使用狀況, 例如最多多少人, RPS多少, DB有多少筆資料
+資料庫層面
+1.設計正確的DB (SQL / NOSQL / ES)
+2.確保有正確的 index（避免 full scan）
+應用層 
+1.檢查欄位的邊界值
+2.實作 caching（例如 Redis 快取常查資料）
+3.結果 pagination（分頁避免一次查太多）
+4.非同步批次查詢（例如 goroutine + channel）
+5.非同步處理:使用 Message Queue 處理非即時任務（如寄信、Log、通知）
+架構層面 (這邊需要跟OPS討論)
+1.CDN cache
+2.查詢資料分離（讀寫分離 DB）
+3.增加 read replica
+4.查詢過濾欄位或壓縮 payload（避免回傳過大 JSON）
+
+實作完後可以做壓測
+根據之前的定義我們預期的使用狀況, 例如最多多少人, RPS多少, DB有多少筆資料
+再建立DB假資料, 並用Jmeter做壓測, 另外使用一些profiler來看瓶頸再哪邊, 例如golang pprof , scala async profiler
+
+1.先用 JMeter 建立壓力模型 (同時間也可以先建立DB假資料)
+測試在 RPS 10、100、500 的反應時間、錯誤率
+分析出哪個 API 在高負載下變慢或出錯
+根據結果聚焦到某個慢查詢 API
+記錄這個 API 在正常與壓力下的行為差異
+2.再用火焰圖分析此 API 的瓶頸
+收集 /debug/pprof/profile 資料
+找出：資料庫慢查詢？JSON marshal 慢？IO 過多？鎖卡住？
+
+講一個實例:
+playtime get api, 實際在prod發生cpu high, 用profiler找出可疑的api
+非查詢的例子:
+community db slow 
+使用JMeter做performance test, 並利用PostgreSQL explain, 找出go-fed裡面PostgreSQL的一些slow query & top wait sql, 有些重構成mongo, 有些對prepend JSON array的語法正規化, 來解決這些問題
+類twitter系統中, 使用JMeter做performance test, 實作shared inbox來解決follower太多的問題
+
+Memory leak 如何偵測與排查？ OOM?
+OOM通常有分幾種, 一種是memory leak造成的, 還有大量的http request也有可能, 另外產生report若資料量太大也會發生
+memory leak design跟code review可以盡量避免
+若要偵測, 開發階段可以用pprof 
+上線後, 可以偵測memory使用量
+建議排查流程
+1.初步觀察：heap 持續增加嗎？goroutine 有沒有暴增？
+2.使用 pprof 取得多份 heap profile（不同時間點）
+3.比對哪些物件沒被釋放（佔用最多記憶體者）
+4.用 pprof list 查看是哪些程式碼保留了物件
+5.檢查 goroutine 數量、是否阻塞
+6.寫單元測試用 goleak 幫忙找 goroutine 洩漏
+常見記憶體洩漏原因
+Golang:
+Goroutine 未停止	
+Slice/gomap 容量持續增長
+Channel 未關閉	
+cache 沒有清除	
+閉包持有參考	
+scala:
+1. 無限制地累積 Future 或 Promise
+2. 持久化 Filter / Dependency 的 Singleton 範圍過大
+3. Improper use of Caching
+4. 開啟 Tracing / Logging 但未限制大小
+5. 延遲取消的 Timer / Scheduler
+6. 長期引用 Request / Session / Context
+
+OOM: http request太多
+需先看是否合理
+rate limit control
+找OPS討論
+例子: community mastodon delete bug
+
+OOM: 一次處理太多data:
+改成非同步產生報表 + 提供下載連結
+Streaming 輸出 CSV, 	一筆筆從 DB 取出、即時寫入, response stream，不進 heap
+EX: scala 可以使用 StreamingResponse 
+較不好: 分批查詢 + 寫入臨時檔案, 用 cursor 或 offset 一批一批查詢，寫入暫存檔後再輸出
+
+improve stability?
+1. Error Handling 與 Panic Recovery
+2. Observability：Logging + Metrics + Tracing
+Logging: log 要寫好, code review時可以特別注意, 記錄事件發生的「細節與上下文」
+Metrics: 可以用kibana or Grafana. QPS、error rate、p99 rtime、CPU/Memory usage
+Tracing: 跨服務追蹤, finatra裡面就有trace id, golang 可以用opentelemetry 
+3. Rate Limiting 與 Circuit Breaker
+4. Health Checks 與 Graceful Shutdown
+5. Testing：單元測試 + 整合測試
+6. Infrastructure 層面：自動修復與擴展
+HPA
