@@ -1,0 +1,79 @@
+ {
+    _id: ObjectId('68c6792721e8d8d202919d88'),
+    members: [
+      'U3794', 'U3784',
+      'U3789', 'U3793',
+      'U3792', 'U3788',
+      'U3790', 'U3786',
+      'U3787', 'U3785',
+      'U3783', 'U3795',
+      'U3791'
+    ],
+    type: 'section',
+    division_id: 'B',
+    department_id: 'DB_18',
+    section_id: 'SB_18_4'
+  },
+
+
+db.employees.aggregate([
+  { $match: { division_id: { $in: ["A", "B"] } } },
+  { $group: {
+      _id: {
+        division_id: "$division_id",
+        department_id: "$department_id",
+        section_id: "$section_id"
+      },
+      members: { $addToSet: "$account_id" }
+  }},
+  { $project: {
+      _id: 0,
+      type: "section",
+      division_id: "$_id.division_id",
+      department_id: "$_id.department_id",
+      section_id: "$_id.section_id",
+      members: 1
+  }},
+  { $merge: { into: "channels", whenMatched: "replace", whenNotMatched: "insert" } }
+])
+
+  {
+    _id: ObjectId('68c684f821e8d8d20291a196'),
+    members: [
+      'U979', 'U935', 'U964', 'U985', 'U918', 'U922',
+      'U916', 'U967', 'U959', 'U919', 'U982', 'U937',
+      'U943', 'U941', 'U942', 'U928', 'U925', 'U921',
+      'U974', 'U969', 'U931', 'U930', 'U924', 'U952',
+      'U978', 'U981', 'U948', 'U946', 'U960', 'U975',
+      'U944', 'U926', 'U913', 'U962', 'U936', 'U939',
+      'U984', 'U958', 'U963', 'U915', 'U988', 'U947',
+      'U932', 'U983', 'U914', 'U933', 'U945', 'U986',
+      'U970', 'U976', 'U971', 'U973', 'U927', 'U911',
+      'U923', 'U917', 'U972', 'U912', 'U940', 'U980',
+      'U954', 'U953', 'U956', 'U965', 'U966', 'U987',
+      'U961', 'U951', 'U955', 'U949', 'U950', 'U920',
+      'U977', 'U938', 'U957', 'U929', 'U934', 'U968'
+    ],
+    type: 'department',
+    division_id: 'A',
+    department_id: 'DA_22'
+  }
+
+db.employees.aggregate([
+  { $match: { division_id: { $in: ["A", "B"] } } },
+  { $group: {
+      _id: {
+        division_id: "$division_id",
+        department_id: "$department_id"
+      },
+      members: { $addToSet: "$account_id" }
+  }},
+  { $project: {
+      _id: 0,
+      type: "department",
+      division_id: "$_id.division_id",
+      department_id: "$_id.department_id",
+      members: 1
+  }},
+  { $merge: { into: "channels_d", whenMatched: "replace", whenNotMatched: "insert" } }
+])
