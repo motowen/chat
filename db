@@ -1,0 +1,18 @@
+| Collection 名稱                             | 儲存內容 / 用途                                                                                                                                                                              |
+| ----------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **users**                                 | 使用者帳號資訊，例如 username, email, 註冊時間,偏好設定等。 ([Rocket.Chat 開發者資源][1])                                                                                                                       |
+| **rooms**                                 | 房間 (room) 資訊 — 可以是公開頻道 (public channel)、私人群組 (private group)、直接訊息 (direct message)、Livechat 房間等；包含房間名稱、型別 (t)、狀態 (是否開啟、是否為 Livechat)、時間戳、更新時間等。 ([Rocket.Chat 開發者資源][2])               |
+| **subscriptions**                         | 指使用者對房間的訂閱 (subscription)，代表某個 user 加入哪個 room，這樣 UI sidebar 才能顯示他有哪一些 rooms。也會包含未讀數 (unread)、提醒(alert)、是否開啟(open)、是否顯示等狀態。 ([Rocket.Chat 開發者資源][3])                                    |
+| **message**                               | 訊息內容 collection：每條訊息存誰傳、在哪個 room、文字內容、timestamp, 是否刪除或編輯過、是否系統訊息 (system message) 等。可能叫 `rocketchat_message` 或類似名稱。 ([Rocket.Chat 開發者資源][1])                                           |
+| **message\_reads** / **read\_receipts**   | 記錄使用者讀到哪條訊息或哪些訊息已被讀取。這樣可以計算未讀數或通知使用者哪些訊息是新的。 ([Rocket.Chat 開發者資源][1])                                                                                                                  |
+| **uploads** (GridFS 的部分)                  | Rocket.Chat 支援上傳檔案（attachments / 文件 /圖片等），這些檔案可能被儲存在 Mongo 的 GridFS 中（`uploads.files` + `uploads.chunks`）或者外部儲存（例如雲端）。如果是 GridFS，會有 `.files` 和 `.chunks`collection。 ([Rocket.Chat][4]) |
+| **userDataFiles**                         | 使用者自己的檔案或私人儲存空間中的檔案。和 uploads 類似，也有 chunks/files。如果用戶上傳了自己的檔案（個人檔案、avatar等）。 ([Rocket.Chat][4])                                                                                        |
+| **apps\_logs** (或 `rocketchat_apps_logs`) | Rocket.Chat 的 apps (插件／擴充功能) 所產生的 log 資料。這可能會非常大。 ([Rocket.Chat][5])                                                                                                                   |
+| **migration(s)**                          | 用來追蹤資料庫 schema／資料 migration 的歷史或版本。官方 migration collection 控制哪些 migration 已經做過。 ([docs.rocket.chat][6])                                                                                |
+
+[1]: https://developer.rocket.chat/apidocs/schemadefinition?utm_source=chatgpt.com "Schema Definition"
+[2]: https://developer.rocket.chat/apidocs/room-schema?utm_source=chatgpt.com "Room"
+[3]: https://developer.rocket.chat/apidocs/subscription-schema?utm_source=chatgpt.com "Subscription"
+[4]: https://forums.rocket.chat/t/remove-attachments-from-rocketchat-database/2572?utm_source=chatgpt.com "Remove attachments from RocketChat database"
+[5]: https://forums.rocket.chat/t/rocketchat-apps-logs-collection-is-massive/8608?utm_source=chatgpt.com "Rocketchat_apps_logs collection is massive"
+[6]: https://docs.rocket.chat/docs/database-migration?utm_source=chatgpt.com "Database Migration Notes"
