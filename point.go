@@ -69,7 +69,6 @@ func GetPointsBalance(ctx context.Context, accountID string) (res GetPointsBalan
 		}).
 		SetResult(&res)
 
-	// API DOC: //https://htcsense.jira.com/wiki/spaces/NEOSTORE/pages/3479175176/Point+Service+API+Doc#%5BGET%5D-%2Fpriv%2Fpoint-service%2Fv1%2Fpoints
 	restyResp, err := restyReq.Get(GetInstance().PointServiceHost + "/priv/point-service/v1/points?userId={userId}")
 	if err != nil {
 		return
@@ -93,7 +92,6 @@ func OperatePoints(ctx context.Context, req OperatePointsReq) (res OperatePoints
 		SetBody(req).
 		SetResult(&res)
 
-	// API DOC: //https://htcsense.jira.com/wiki/spaces/NEOSTORE/pages/3479175176/Point+Service+API+Doc#%5BPOST%5D-%2Fpriv%2Fpoint-service%2Fv1%2Fpoints
 	restyResp, err := restyReq.Post(GetInstance().PointServiceHost + "/priv/point-service/v1/points")
 	if err != nil {
 		return
