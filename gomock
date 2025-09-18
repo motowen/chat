@@ -1,0 +1,154 @@
+📂 專案結構範例
+myapp/
+├── client.go        # 定義 interface & production client
+├── service.go       # 使用 client 的業務邏輯
+├── service_test.go  # 用 gomock 測試
+├── mocks/           # 由 mockgen 生成的 mock
+
+client.go
+
+定義一個抽象的 HTTPClient，並提供實際實作：
+
+package myapp
+
+import (
+	"net/http"
+)
+
+type HTTPClient interface {
+	Do(req *http.Request) (*http.Response, error)
+}
+
+// DefaultClient wraps the real http.Client
+type DefaultClient struct {
+	client *http.Client
+}
+
+func NewDefaultClient() *DefaultClient {
+	return &DefaultClient{client: http.DefaultClient}
+}
+
+func (c *DefaultClient) Do(req *http.Request) (*http.Response, error) {
+	return c.client.Do(req)
+}
+
+service.go
+
+寫一個「呼叫外部 API」的邏輯：
+
+package myapp
+
+import (
+	"encoding/json"
+	"fmt"
+	"io"
+	"net/http"
+)
+
+type Service struct {
+	client HTTPClient
+	apiURL string
+}
+
+func NewService(client HTTPClient, apiURL string) *Service {
+	return &Service{client: client, apiURL: apiURL}
+}
+
+type APIResponse struct {
+	Message string `json:"message"`
+}
+
+func (s *Service) FetchMessage() (string, error) {
+	req, err := http.NewRequest(http.MethodGet, s.apiURL, nil)
+	if err != nil {
+		return "", fmt.Errorf("create request: %w", err)
+	}
+
+	resp, err := s.client.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("do request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("unexpected status: %d", resp.StatusCode)
+	}
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", fmt.Errorf("read body: %w", err)
+	}
+
+	var apiResp APIResponse
+	if err := json.Unmarshal(body, &apiResp); err != nil {
+		return "", fmt.Errorf("unmarshal: %w", err)
+	}
+
+	return apiResp.Message, nil
+}
+
+生成 gomock
+
+在 myapp/ 底下執行：
+
+mockgen -source=client.go -destination=mocks/mock_client.go -package=mocks
+
+
+這會產生 mocks/mock_client.go，裡面有 MockHTTPClient。
+
+service_test.go
+
+用 gomock 測試：
+
+package myapp_test
+
+import (
+	"bytes"
+	"io/ioutil"
+	"net/http"
+	"testing"
+
+	"github.com/golang/mock/gomock"
+	"github.com/stretchr/testify/assert"
+
+	"myapp"
+	"myapp/mocks"
+)
+
+func TestService_FetchMessage(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mockClient := mocks.NewMockHTTPClient(ctrl)
+
+	// 模擬 API 回應
+	fakeResp := `{"message": "hello from mock"}`
+	httpResp := &http.Response{
+		StatusCode: http.StatusOK,
+		Body:       ioutil.NopCloser(bytes.NewBufferString(fakeResp)),
+	}
+
+	// 預期會呼叫 Do()
+	mockClient.EXPECT().
+		Do(gomock.Any()).
+		Return(httpResp, nil).
+		Times(1)
+
+	svc := myapp.NewService(mockClient, "http://fake.api/test")
+
+	msg, err := svc.FetchMessage()
+
+	assert.NoError(t, err)
+	assert.Equal(t, "hello from mock", msg)
+}
+
+🔑 重點
+
+抽象出 interface (HTTPClient)
+→ 測試時用 mock，production 時用 http.Client。
+
+gomock 驗證呼叫次數與參數
+→ 可以保證程式真的有呼叫外部 API。
+
+測試時不打真 API
+→ 測試快速又 deterministic。
