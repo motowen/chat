@@ -103,3 +103,23 @@ HSET online_status:{userId} status offline last_seen 1695401000
 即時性（WebSocket + Pub/Sub）
 查詢效率（Redis Set/Hash 結構）
 可擴展性（好友、群組、跨服務器同步）
+
+---------------------------------------
+方案 A：RESTful API 改從 MongoDB 讀取
+改動點：RESTful API 查詢 online status 時，不只看 in-memory，而是 fallback 去 MongoDB。
+流程：
+REST API 先查 in-memory
+找不到 → 查 MongoDB
+讀到之後可再寫回 in-memory 做快取
+優點：不用改寫太多邏輯，只要 API handler 多加一層 fallback。
+缺點：MongoDB 的 I/O 開銷可能比純 memory 慢（但你可以用 in-memory 做快取緩解）。
+方案 B：啟動時預先載入狀態
+改動點：服務重啟時，從 MongoDB 把狀態 preload 進 in-memory。
+流程：
+程式啟動時 → load MongoDB 裡的所有 online 狀態 → 塞回 in-memory。
+優點：啟動後 RESTful API 照舊使用 in-memory，無需改 handler。
+缺點：若狀態數量大，啟動時間會拉長；而且如果 service 長時間運行，中途 MongoDB 更新但 in-memory 沒同步，可能會有落差。
+方案 C：RESTful API 完全切換到 MongoDB
+改動點：RESTful API 直接改讀 MongoDB，不再依賴 in-memory。
+優點：狀態單一來源，不會有落差。
+缺點：這算是「中度改動」，因為要調整整個查詢路徑。
