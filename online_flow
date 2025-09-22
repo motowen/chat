@@ -40,3 +40,66 @@ WS Server 2 通知 Client B → 立刻顯示 A 離線。
 多實例同步：無論 A/B 連到哪個 WS Server，都能即時知道對方狀態。
 API 查詢一致性：好友列表查詢時直接讀 Redis，不必依賴 WS。
 
+Redis:
+🔹 1. 單用戶狀態存儲
+目前你是 online_status:{userId} → string，這樣可以，但有幾個優化點。
+建議改成 Hash
+HSET online_status:{userId} status online since 1695400000 device web
+EXPIRE online_status:{userId} {TTL}
+範例：
+{
+  "status": "online",
+  "since": 1695400000,
+  "device": "web"
+}
+好處：
+可以存 更多欄位（狀態、登入時間、裝置類型）。
+避免為了加新欄位而開新 key。
+🔹 2. 全局在線清單
+如果你需要快速查「誰在線」，可以用 Set：
+SADD online_users {userId}
+SREM online_users {userId}
+online_users = 當前所有在線用戶 ID
+查詢某人是否在線 → SISMEMBER online_users {userId}
+查詢在線總數 → SCARD online_users
+🔹 3. 好友狀態批量查詢
+假設某人有 500 個好友，要查他們誰在線：
+方案 A: Redis pipeline
+批量 HGET online_status:{friendId} status
+適合好友數少（<1k）的情況。
+方案 B: 利用 online_users set
+SINTER online_users friends:{userId}
+friends:{userId} = 該用戶好友清單 (set)
+這樣可以 一次得到所有在線好友。
+🔹 4. 群組在線查詢
+群組可能有上萬人，如果要顯示在線人數：
+SINTERCARD online_users group_members:{groupId}
+group_members:{groupId} = 該群組所有成員 (set)
+SINTERCARD 可以直接返回「交集元素數量」，不用真的取出清單 → O(min(N,M)) 計算。
+適合做「群組在線數」顯示。
+🔹 5. 最後上線時間 (last seen)
+當 user 下線時，除了 status=offline，還要記錄 last_seen：
+HSET online_status:{userId} status offline last_seen 1695401000
+這樣好友列表可以顯示：
+✅ 在線中
+⏳ 最後上線時間：5 分鐘前
+🔹 6. Pub/Sub 事件格式
+狀態變更要廣播，可以用 JSON：
+{
+  "event": "status_change",
+  "userId": "123",
+  "status": "offline",
+  "timestamp": 1695402000,
+  "device": "mobile"
+}
+透過 NATS / Redis PubSub 發出去，其他 WS server 直接轉發給有訂閱的 client。
+🔹 總結
+單用戶狀態：Hash，存 status/device/last_seen。
+全局在線：Set online_users。
+好友/群組查詢：利用 SINTER / SINTERCARD 提高效率。
+最後上線時間：存到 Hash，方便顯示。
+狀態廣播：透過 Pub/Sub，用 JSON 格式。
+👉 這樣設計可以同時滿足：
+即時性（WebSocket + Pub/Sub）
+查詢效率（Redis Set/Hash 結構）
+可擴展性（好友、群組、跨服務器同步）
