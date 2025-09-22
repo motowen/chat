@@ -1,0 +1,127 @@
+OnlineStatus 实现机制详解
+1. 状态定义
+系统定义了 5 种在线状态：
+online: 在线
+offline: 离线
+be-right-back: 马上回来
+busy: 忙碌
+do-not-disturb: 请勿打扰
+这些常量定义在 internal/app/util/const.go 中。
+2. 存储机制
+OnlineStatus 使用 Redis 缓存 作为主要存储方式：
+缓存键格式: online_status:{userId}
+存储位置: Redis 缓存系统
+TTL (生存时间):
+非离线状态：config.Env.HeartBeatTime 秒
+离线状态：永久存储 (TTL = 0)
+3. API 端点
+4. 核心实现流程
+A. 设置状态 (SetUserInfotoCache)
+B. 心跳保活 (Heartbeat)
+C. 获取状态 (多个位置)
+5. 通知机制
+当用户状态发生变化时，系统会异步通知：
+好友 (notifyFriend)
+组织成员 (notifyOrgMember)
+状态订阅者 (notifyStatus)
+6. 隐私控制
+系统提供 ShowOnlineStatus 设置：
+存储在数据库中的用户偏好设置
+控制其他用户是否能看到自己的在线状态
+通过 /api/community-service/v1/setting/status API 修改
+7. 自动离线机制
+通过心跳机制实现自动离线
+如果用户在 HeartBeatTime 时间内没有发送心跳，缓存过期
+系统获取状态时会返回 "offline"
+8. 集成点
+OnlineStatus 被广泛用于：
+好友列表显示
+聊天系统
+用户搜索
+分类管理
+通知系统
+这种基于 Redis 缓存的实现方式具有高性能、实时性强的特点，同时通过心跳机制确保状态的准确性。
+
+✅ 優點
+
+高效能：Redis 讀寫快，適合做高頻狀態查詢。
+
+即時性好：心跳 + TTL 過期，自動轉換 offline，減少錯誤狀態。
+
+易擴展：狀態變更通知可透過 pub/sub 或 MQ 分發，支援多服務節點。
+
+隱私控制：提供 ShowOnlineStatus，能避免用戶被強制暴露狀態。
+
+⚠️ 缺點 / 潛在問題
+
+心跳頻率 vs 資源消耗
+
+如果 HeartBeatTime 設定太短（例如 5s），大量用戶會對 Redis 產生高 QPS 壓力。
+
+太長（例如 5min）則狀態可能不夠即時，出現「明明離線但還顯示在線」的情況。
+
+Redis 單點/資源壓力
+
+若用戶數量大（百萬級），每個人一個 online_status:{userId} key，Redis 記憶體壓力不小。
+
+心跳頻繁更新 key，容易造成 寫放大。
+
+通知風暴 (Notification Storm)
+
+假設一個人狀態變更要通知「所有好友 + 組織成員 + 訂閱者」，一個大帳號可能會觸發成千上萬的通知，帶來 瞬間流量尖峰。
+
+跨區 / 多 DC 同步問題
+
+如果系統是多數據中心部署（multi-DC），Redis 狀態可能會有延遲或不一致，導致某些區域顯示在線，另一個區域顯示離線。
+
+隱私邏輯在應用層
+
+ShowOnlineStatus 是在 API 層面處理，如果有其他內部服務直接讀 Redis，就可能繞過隱私設定。
+
+離線狀態永不過期
+
+你目前設計 offline = TTL 0，可能會造成 Redis 有很多 永不過期的垃圾 key。
+
+🔧 改進建議
+
+心跳優化
+
+使用 差分心跳：只有在狀態變化時才寫 Redis，其他時候只是延長 TTL（例如用 EXPIRE 更新，而不是 SET）。
+
+考慮採用 WebSocket ping/pong 代替 HTTP 心跳，減少額外請求開銷。
+
+存儲優化
+
+把 offline 狀態改為不寫入 Redis，查詢不到就當作 offline，避免 Redis 裡充斥大量 offline key。
+
+或者設定一個長 TTL（例如 7 天）來防止永久積壓。
+
+通知機制改進
+
+可在通知系統增加 去抖動/批量處理（例如狀態變更後延遲 2 秒再推送，合併多次變更）。
+
+對組織類的廣播，可以用 MQ + 消息過濾，避免每次都推送給所有成員。
+
+多 DC 一致性
+
+若系統需要跨區，可以考慮 Redis Cluster + 異地複製，或在應用層加一層 狀態聚合邏輯（例如多 DC 同步後取最近心跳）。
+
+隱私控制
+
+建議在 狀態寫入層就考慮隱私（例如 ShowOnlineStatus = false，就不要寫 online，而是直接寫 offline），而不是在讀取層才遮蔽。
+
+狀態模型可擴展
+
+目前只有 5 種狀態，可以考慮用一個 狀態機/enum，並支援附加 metadata，例如：
+
+{
+  "status": "busy",
+  "since": 1695392100,
+  "device": "mobile"
+}
+
+
+這樣可以更靈活應對之後的業務需求（如多端登錄、最後在線時間）。
+
+👉 總結：
+你的方案適合 中小規模 即時聊天系統，但若用戶量級達到 百萬級並發，會遇到 Redis 壓力、通知風暴、隱私一致性 問題。建議調整 offline key 策略、心跳機制、通知優化，並提前考慮 多 DC 部署。
