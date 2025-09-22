@@ -1,0 +1,42 @@
+Client A        WS Server 1         Redis        NATS Pub/Sub        WS Server 2        Client B
+   |                 |                 |               |                  |                 |
+   |--- WebSocket --->|                 |               |                  |                 |
+   |                 |--- SET user:123=online -------->|               |                  |
+   |                 |                 |               |                  |                 |
+   |                 |--- Publish(user:123 online) --->|----------------->|                  |
+   |                 |                 |               |--- event ------->|--- notify B --->|
+   |                 |                 |               |                  |                 |
+   |  <--- pong ---- |                 |               |                  |                 |
+   |--- ping ------->|                 |               |                  |                 |
+   |                 |                 |               |                  |                 |
+... (持續連線) ...
+   |                 |                 |               |                  |                 |
+[Client A 關閉連線/掉線]
+   |--- (disconnect)|                 |               |                  |                 |
+   |                 |--- SET user:123=offline ------>|               |                  |
+   |                 |--- Publish(user:123 offline) ->|----------------->|                  |
+   |                 |                 |               |--- event ------->|--- notify B --->|
+   |                 |                 |               |                  |                 |
+
+
+🔹 流程解釋
+Client A 上線
+與 WS Server 1 建立 WebSocket。
+Server 1 在 Redis 寫入狀態 = online。
+同時透過 NATS/Redis PubSub 廣播 "user:123 online"。
+Client B 訂閱到事件
+Client B 連到 WS Server 2。
+WS Server 2 收到 NATS 廣播 → 轉發給 Client B → 即時顯示 A 上線。
+心跳存活
+Client A 與 WS Server 1 定期交換 ping/pong，確保連線正常。
+若超時未收到 pong，Server 1 認定 Client A 掉線。
+Client A 離線
+連線斷開時，Server 1 更新 Redis → user:123=offline。
+廣播 user:123 offline 給所有 WS Server。
+WS Server 2 通知 Client B → 立刻顯示 A 離線。
+
+🔹 好處
+低延遲：NATS/Redis PubSub 事件傳播通常在毫秒級。
+多實例同步：無論 A/B 連到哪個 WS Server，都能即時知道對方狀態。
+API 查詢一致性：好友列表查詢時直接讀 Redis，不必依賴 WS。
+
