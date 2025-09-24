@@ -1,0 +1,377 @@
+我有一個mongo db裡面有一大堆部門users的資料 例如: { "sectId": "SA", "deptId": "DA", "divisionId": "DDA", "functionId": "FA", "userId": "UA", "supervisor": "UB" } { "sectId": "SA", "deptId": "DA", "divisionId": "DDA", "functionId": "FA", "userId": "UZ", "supervisor": "UA" } { "sectId": "SB", "deptId": "DA", "divisionId": "DDA", "functionId": "FA", "userId": "UW", "supervisor": "UA" } { "sectId": "DA", "deptId": "DA", "divisionId": "DDA", "functionId": "FA", "userId": "UB", "supervisor": "UC" } 想要找出sect / dept 的主管 一個主管可以管理多個部門 例如上例SA / SB section的主管會是UA dept DA的主管會是UB (因為sectId == deptId) 但也有可能sectId != deptId 卻是dept主管 例如:UD為SC的主管, UE是SC的員工, UB是DB的主管 { "sectId": "SC", "deptId": "DB", "divisionId": "DDA", "functionId": "FA", "userId": "UD", "supervisor": "UB" } { "sectId": "SC", "deptId": "DB", "divisionId": "DDA", "functionId": "FA", "userId": "UE", "supervisor": "UD" }
+
+Section 主管查詢
+假設你想找 sectId = "SA" 的主管：
+db.users.aggregate([
+  { $match: { sectId: "SA" } },
+  {
+    $graphLookup: {
+      from: "users",
+      startWith: "$supervisor",
+      connectFromField: "supervisor",
+      connectToField: "userId",
+      as: "supervisors",
+      maxDepth: 5
+    }
+  },
+  {
+    $project: {
+      userId: 1,
+      sectId: 1,
+      supervisors: "$supervisors.userId"
+    }
+  }
+])
+
+這樣可以拉出所有「上層主管鏈」。接下來，你就可以用規則來判斷哪個人是 sect 層級主管（例如出現在多個同 sect 的 subordinate 中）。
+Department 主管查詢
+判斷邏輯要分兩種：
+sectId == deptId 的 case（簡單）：
+db.users.find({ sectId: "DA", deptId: "DA" })
+這個人就是 DA 的主管。
+sectId != deptId 但仍是主管 的 case（需要圖遍歷）：
+找 deptId = DB 的所有人
+沿 supervisor chain 往上爬
+第一個「sectId == SC 且 supervisor 不是自己部門的人」→ 這人就是 SC 的主管（像 UD）。
+最上層主管 UB 則是 DB 的主管。
+可以用 $graphLookup 查：
+db.users.aggregate([
+  { $match: { deptId: "DB" } },
+  {
+    $graphLookup: {
+      from: "users",
+      startWith: "$supervisor",
+      connectFromField: "supervisor",
+      connectToField: "userId",
+      as: "supervisors",
+      maxDepth: 5
+    }
+  },
+  { $unwind: "$supervisors" },
+  {
+    $match: {
+      $expr: {
+        $or: [
+          { $eq: ["$supervisors.sectId", "$supervisors.deptId"] }, // 正常 dept 主管
+          { $ne: ["$supervisors.sectId", "$supervisors.deptId"] }  // 特殊 case，需要再過濾
+        ]
+      }
+    }
+  },
+  {
+    $project: {
+      userId: 1,
+      deptId: 1,
+      supervisor: "$supervisors.userId",
+      supervisorSect: "$supervisors.sectId",
+      supervisorDept: "$supervisors.deptId"
+    }
+  }
+])
+建議整理
+如果你的需求是 一次性把所有 section/dept 的主管表拉出來，我建議做兩步：
+先用 $graphLookup 建立 user → supervisor chain，存成一個暫存 collection。
+再寫 aggregation 根據規則挑出：
+每個 section 的 top-level 主管
+每個 department 的 top-level 主管
+
+-------
+原始資料長這樣（collection 名稱假設是 users）：
+{
+  "sectId": "SA",
+  "deptId": "DA",
+  "divisionId": "DDA",
+  "functionId": "FA",
+  "userId": "UA",
+  "supervisor": "UB"
+}
+核心邏輯
+用 $graphLookup 往上追溯每個 user 的主管鏈。
+用 $unwind 把所有 supervisor 展開。
+判斷 section 主管 與 department 主管：
+section 主管：第一個在 sectId 底下被其他人指向的主管。
+department 主管：sectId == deptId 的 user，或是 supervisor chain 的最上層。
+Aggregation Pipeline 範例
+db.users.aggregate([
+  // Step 1: 建立 supervisor chain
+  {
+    $graphLookup: {
+      from: "users",
+      startWith: "$supervisor",
+      connectFromField: "supervisor",
+      connectToField: "userId",
+      as: "supervisors",
+      maxDepth: 10
+    }
+  },
+  // Step 2: 展開每個人的主管鏈
+  { $unwind: { path: "$supervisors", preserveNullAndEmptyArrays: true } },
+  // Step 3: 投影需要的欄位
+  {
+    $project: {
+      sectId: 1,
+      deptId: 1,
+      userId: 1,
+      supervisorId: "$supervisors.userId",
+      supervisorSect: "$supervisors.sectId",
+      supervisorDept: "$supervisors.deptId"
+    }
+  },
+  // Step 4: 找出 sect / dept 的最上層主管
+  {
+    $group: {
+      _id: { sectId: "$sectId", deptId: "$deptId" },
+      sectSupervisors: { $addToSet: "$supervisorId" },
+      deptSupervisors: { $addToSet: "$supervisorId" }
+    }
+  },
+  // Step 5: 整理輸出格式
+  {
+    $project: {
+      _id: 0,
+      sectId: "$_id.sectId",
+      deptId: "$_id.deptId",
+      sectSupervisors: 1,
+      deptSupervisors: 1
+    }
+  }
+])
+輸出範例
+用你給的資料，可能會輸出：
+[
+  {
+    "sectId": "SA",
+    "deptId": "DA",
+    "sectSupervisors": ["UA"],
+    "deptSupervisors": ["UB"]
+  },
+  {
+    "sectId": "SB",
+    "deptId": "DA",
+    "sectSupervisors": ["UA"],
+    "deptSupervisors": ["UB"]
+  },
+  {
+    "sectId": "SC",
+    "deptId": "DB",
+    "sectSupervisors": ["UD"],
+    "deptSupervisors": ["UB"]
+  }
+]
+這樣就能一次性看到 section 的主管 與 department 的主管。
+如果你的規則還需要「只取最上層一個主管」（而不是所有可能 supervisor），可以在 $graphLookup 之後加一個 $sort + $first 的邏輯來過濾。
+
+--------
+規則再確認
+sect 主管：該 section 底下所有員工的 supervisor chain 裡，最接近且一致的主管。
+例：SA、SB → UA。
+dept 主管：
+正常情況：sectId == deptId 的 user，就是該部門主管（例：DA → UB）。
+特殊情況：如果 sectId != deptId，則沿 supervisor chain 往上找，最終找到該 dept 的主管（例：DB → UB，即便 SC 的 sect 主管是 UD）。
+
+Pipeline 實作
+db.users.aggregate([
+  // Step 1: 拉出每個人的 supervisor chain
+  {
+    $graphLookup: {
+      from: "users",
+      startWith: "$supervisor",
+      connectFromField: "supervisor",
+      connectToField: "userId",
+      as: "supervisors",
+      maxDepth: 10
+    }
+  },
+  // Step 2: 對於每個 user，判斷最終的 sect / dept 主管
+  {
+    $project: {
+      sectId: 1,
+      deptId: 1,
+      userId: 1,
+      // sect 主管：取 supervisor chain 裡最接近的一個人
+      sectSupervisor: {
+        $ifNull: [{ $arrayElemAt: ["$supervisors.userId", -1] }, "$supervisor"]
+      },
+      // dept 主管：找出 supervisor chain 中「sectId == deptId」的第一個人
+      deptSupervisor: {
+        $let: {
+          vars: {
+            deptSupervisors: {
+              $filter: {
+                input: "$supervisors",
+                cond: { $eq: ["$$this.sectId", "$$this.deptId"] }
+              }
+            }
+          },
+          in: {
+            $ifNull: [
+              { $arrayElemAt: ["$$deptSupervisors.userId", 0] },
+              "$supervisor"
+            ]
+          }
+        }
+      }
+    }
+  },
+  // Step 3: 對 sect/dept 去重，保證唯一主管
+  {
+    $group: {
+      _id: { sectId: "$sectId", deptId: "$deptId" },
+      sectSupervisor: { $first: "$sectSupervisor" },
+      deptSupervisor: { $first: "$deptSupervisor" }
+    }
+  },
+  // Step 4: 整理輸出格式
+  {
+    $project: {
+      _id: 0,
+      sectId: "$_id.sectId",
+      deptId: "$_id.deptId",
+      sectSupervisor: 1,
+      deptSupervisor: 1
+    }
+  }
+])
+
+輸出範例（基於你的資料）
+[
+  {
+    "sectId": "SA",
+    "deptId": "DA",
+    "sectSupervisor": "UA",
+    "deptSupervisor": "UB"
+  },
+  {
+    "sectId": "SB",
+    "deptId": "DA",
+    "sectSupervisor": "UA",
+    "deptSupervisor": "UB"
+  },
+  {
+    "sectId": "SC",
+    "deptId": "DB",
+    "sectSupervisor": "UD",
+    "deptSupervisor": "UB"
+  }
+]
+
+這樣每個 sect 和 dept 都只有一個主管。
+如果部門或 section 的 supervisor chain 更複雜（例如一個人可能被多個上層管理），就會只取最接近的一個。
+
+--------
+Aggregation Pipeline (含 debug chain)
+db.users.aggregate([
+  // Step 1: 拉出每個人的 supervisor chain
+  {
+    $graphLookup: {
+      from: "users",
+      startWith: "$supervisor",
+      connectFromField: "supervisor",
+      connectToField: "userId",
+      as: "supervisors",
+      maxDepth: 10
+    }
+  },
+  // Step 2: 投影出 chain 與計算 sect/dept 主管
+  {
+    $project: {
+      sectId: 1,
+      deptId: 1,
+      userId: 1,
+      supervisorsChain: "$supervisors", // debug 用，整條主管鏈
+      // sect 主管：取 chain 裡最接近的一個人
+      sectSupervisor: {
+        $ifNull: [{ $arrayElemAt: ["$supervisors.userId", -1] }, "$supervisor"]
+      },
+      // dept 主管：取 chain 中第一個 "sectId == deptId" 的人
+      deptSupervisor: {
+        $let: {
+          vars: {
+            deptSupervisors: {
+              $filter: {
+                input: "$supervisors",
+                cond: { $eq: ["$$this.sectId", "$$this.deptId"] }
+              }
+            }
+          },
+          in: {
+            $ifNull: [
+              { $arrayElemAt: ["$$deptSupervisors.userId", 0] },
+              "$supervisor"
+            ]
+          }
+        }
+      }
+    }
+  },
+  // Step 3: 對 sect/dept 去重
+  {
+    $group: {
+      _id: { sectId: "$sectId", deptId: "$deptId" },
+      sectSupervisor: { $first: "$sectSupervisor" },
+      deptSupervisor: { $first: "$deptSupervisor" },
+      debugChains: { $push: { userId: "$userId", chain: "$supervisorsChain" } }
+    }
+  },
+  // Step 4: 格式化輸出
+  {
+    $project: {
+      _id: 0,
+      sectId: "$_id.sectId",
+      deptId: "$_id.deptId",
+      sectSupervisor: 1,
+      deptSupervisor: 1,
+      debugChains: 1
+    }
+  }
+])
+
+輸出範例（依照你給的資料）
+[
+  {
+    "sectId": "SA",
+    "deptId": "DA",
+    "sectSupervisor": "UA",
+    "deptSupervisor": "UB",
+    "debugChains": [
+      {
+        "userId": "UA",
+        "chain": [
+          { "userId": "UB", "sectId": "DA", "deptId": "DA", "supervisor": "UC" },
+          { "userId": "UC", "sectId": "...", "deptId": "...", "supervisor": "..." }
+        ]
+      },
+      {
+        "userId": "UZ",
+        "chain": [
+          { "userId": "UA", "sectId": "SA", "deptId": "DA", "supervisor": "UB" },
+          { "userId": "UB", "sectId": "DA", "deptId": "DA", "supervisor": "UC" }
+        ]
+      }
+    ]
+  },
+  {
+    "sectId": "SC",
+    "deptId": "DB",
+    "sectSupervisor": "UD",
+    "deptSupervisor": "UB",
+    "debugChains": [
+      {
+        "userId": "UD",
+        "chain": [
+          { "userId": "UB", "sectId": "DA", "deptId": "DA", "supervisor": "UC" }
+        ]
+      },
+      {
+        "userId": "UE",
+        "chain": [
+          { "userId": "UD", "sectId": "SC", "deptId": "DB", "supervisor": "UB" },
+          { "userId": "UB", "sectId": "DA", "deptId": "DA", "supervisor": "UC" }
+        ]
+      }
+    ]
+  }
+]
+這樣你就能一眼看到：
+每個 sect/dept 的唯一主管 (sectSupervisor, deptSupervisor)
+每個 user 的完整 supervisor chain (debugChains)
