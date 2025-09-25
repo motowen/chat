@@ -154,3 +154,94 @@ $graphLookup 在大 user collection（尤其是樹狀層級深的）會很重。
 最高主管會變成 null（建議加 fallback）。
 輸出 supervisor 會是陣列（是否要改成單一值要看需求）。
 效能（如果資料量大，建議改成 denormalization / 預先寫入 allSupervisors）。
+
+
+假設你的資料如下（簡化版）：
+[
+  { "sectId": "SA", "deptId": "DA", "divisionId": "DDA", "functionId": "FA", "userId": "UA", "supervisor": "UB" },
+  { "sectId": "SB", "deptId": "DA", "divisionId": "DDA", "functionId": "FA", "userId": "UZ", "supervisor": "UA" },
+  { "sectId": "SB", "deptId": "DA", "divisionId": "DDA", "functionId": "FA", "userId": "UW", "supervisor": "UA" },
+  { "sectId": "DA", "deptId": "DA", "divisionId": "DDA", "functionId": "FA", "userId": "UB", "supervisor": "UC" },
+  { "sectId": "SC", "deptId": "DB", "divisionId": "DDA", "functionId": "FA", "userId": "UD", "supervisor": "UB" },
+  { "sectId": "SC", "deptId": "DB", "divisionId": "DDA", "functionId": "FA", "userId": "UE", "supervisor": "UD" }
+]
+Step1: $graphLookup 展開 supervisor chain
+Pipeline：
+{
+  $graphLookup: {
+    from: "users",
+    startWith: "$supervisor",
+    connectFromField: "supervisor",
+    connectToField: "userId",
+    as: "supChain",
+    depthField: "level"
+  }
+}
+解釋：
+對每個 user，從 supervisor 開始，沿著 supervisor → userId 走，找到整條上級鏈，放到 supChain。
+level 表示距離原 user 的層數（直屬主管 = 0，直屬主管的主管 = 1，…）
+產生的中間資料（部分示例）
+user UZ
+{
+  "sectId": "SB",
+  "deptId": "DA",
+  "divisionId": "DDA",
+  "functionId": "FA",
+  "userId": "UZ",
+  "supervisor": "UA",
+  "supChain": [
+    { "userId": "UA", "sectId": "SA", "deptId": "DA", "divisionId": "DDA", "functionId": "FA", "supervisor": "UB", "level": 0 },
+    { "userId": "UB", "sectId": "DA", "deptId": "DA", "divisionId": "DDA", "functionId": "FA", "supervisor": "UC", "level": 1 },
+    { "userId": "UC", "sectId": "DDA", "deptId": "DB", "divisionId": "DDB", "functionId": "FB", "supervisor": null, "level": 2 }
+  ]
+}
+user UA
+{
+  "sectId": "SA",
+  "deptId": "DA",
+  "divisionId": "DDA",
+  "functionId": "FA",
+  "userId": "UA",
+  "supervisor": "UB",
+  "supChain": [
+    { "userId": "UB", "sectId": "DA", "deptId": "DA", "divisionId": "DDA", "functionId": "FA", "supervisor": "UC", "level": 0 },
+    { "userId": "UC", "sectId": "DDA", "deptId": "DB", "divisionId": "DDB", "functionId": "FB", "supervisor": null, "level": 1 }
+  ]
+}
+這樣每個 user 都會有一個 supChain 陣列，從直屬主管開始往上列到最頂層。
+Step2: $addFields 找四層主管（取最近的不同層主管）
+Pipeline：
+$addFields: {
+  sectSupervisor: { $first: { $filter: { input: "$supChain", as: "sup", cond: { $ne: ["$$sup.sectId", "$sectId"] } } } },
+  deptSupervisor: { $first: { $filter: { input: "$supChain", as: "sup", cond: { $ne: ["$$sup.deptId", "$deptId"] } } } },
+  divisionSupervisor: { $first: { $filter: { input: "$supChain", as: "sup", cond: { $ne: ["$$sup.divisionId", "$divisionId"] } } } },
+  functionSupervisor: { $first: { $filter: { input: "$supChain", as: "sup", cond: { $ne: ["$$sup.functionId", "$functionId"] } } } }
+}
+解釋：
+$filter 找出 supChain 中「該屬性值和自己不同的第一個 supervisor」
+$first 取最近的一個 → 就是每層主管
+中間資料示例（user UZ）
+{
+  "userId": "UZ",
+  "sectId": "SB",
+  "deptId": "DA",
+  "divisionId": "DDA",
+  "functionId": "FA",
+  "supervisor": "UA",
+  "supChain": [ ... 如上 ... ],
+  "sectSupervisor": { "userId": "UA", "sectId": "SA", ... },
+  "deptSupervisor": { "userId": "UB", "deptId": "DA", ... },
+  "divisionSupervisor": { "userId": "UC", "divisionId": "DDB", ... },
+  "functionSupervisor": { "userId": "UC", "functionId": "FB", ... }
+}
+注意
+如果某一層在 chain 中找不到不同的值，$first 會回 null。
+這裡還沒有做 Step3 的 $project → userId 已經可讀，但整個 supervisor doc 還在。
+總結：
+userId	supChain (userIds)	sectSupervisor	deptSupervisor	divisionSupervisor	functionSupervisor
+UZ	[UA, UB, UC]	UA	UB	UC	UC
+UA	[UB, UC]	UB	UC	UC	UC
+UB	[UC]	UC	UC	UC	UC
+UD	[UB, UC]	UB	UC	UC	UC
+UE	[UD, UB, UC]	UD	UB	UC	UC
+這就是 Step1 + Step2 執行完的中間結果。
