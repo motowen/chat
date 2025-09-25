@@ -1,0 +1,100 @@
+db.users.aggregate([
+  // Step1: 每個 user 展開 supervisor chain
+  {
+    $graphLookup: {
+      from: "users",
+      startWith: "$supervisor",
+      connectFromField: "supervisor",
+      connectToField: "userId",
+      as: "supChain",
+      depthField: "level"
+    }
+  },
+
+  // Step2: 找出四層主管（取最近的不同層主管）
+  {
+    $addFields: {
+      sectSupervisor: {
+        $first: {
+          $filter: {
+            input: "$supChain",
+            as: "sup",
+            cond: { $ne: ["$$sup.sectId", "$sectId"] }
+          }
+        }
+      },
+      deptSupervisor: {
+        $first: {
+          $filter: {
+            input: "$supChain",
+            as: "sup",
+            cond: { $ne: ["$$sup.deptId", "$deptId"] }
+          }
+        }
+      },
+      divisionSupervisor: {
+        $first: {
+          $filter: {
+            input: "$supChain",
+            as: "sup",
+            cond: { $ne: ["$$sup.divisionId", "$divisionId"] }
+          }
+        }
+      },
+      functionSupervisor: {
+        $first: {
+          $filter: {
+            input: "$supChain",
+            as: "sup",
+            cond: { $ne: ["$$sup.functionId", "$functionId"] }
+          }
+        }
+      }
+    }
+  },
+
+  // Step3: 只保留 userId，避免輸出整個 doc
+  {
+    $project: {
+      sectId: 1,
+      deptId: 1,
+      divisionId: 1,
+      functionId: 1,
+      "sectSupervisor.userId": 1,
+      "deptSupervisor.userId": 1,
+      "divisionSupervisor.userId": 1,
+      "functionSupervisor.userId": 1
+    }
+  },
+
+  // Step4: 聚合成「部門報表」
+  {
+    $group: {
+      _id: {
+        sectId: "$sectId",
+        deptId: "$deptId",
+        divisionId: "$divisionId",
+        functionId: "$functionId"
+      },
+      sectSupervisor: { $addToSet: "$sectSupervisor.userId" },
+      deptSupervisor: { $addToSet: "$deptSupervisor.userId" },
+      divisionSupervisor: { $addToSet: "$divisionSupervisor.userId" },
+      functionSupervisor: { $addToSet: "$functionSupervisor.userId" }
+    }
+  },
+
+  // Step5: 輸出整齊格式
+  {
+    $project: {
+      _id: 0,
+      sectId: "$_id.sectId",
+      sectSupervisor: 1,
+      deptId: "$_id.deptId",
+      deptSupervisor: 1,
+      divisionId: "$_id.divisionId",
+      divisionSupervisor: 1,
+      functionId: "$_id.functionId",
+      functionSupervisor: 1
+    }
+  }
+])
