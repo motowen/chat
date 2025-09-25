@@ -1,0 +1,14 @@
+我有一個mongo db裡面有一大堆部門users的資料 會有sectId / deptId / divisionId / functionId 且每個人只會有一個直屬主管supervisor userId是自己的id 一個主管可以管理多個部門 例如: { "sectId": "SA", "deptId": "DA", "divisionId": "DDA", "functionId": "FA", "userId": "UA", "supervisor": "UB" } 
+需要先找出有多少實際的sectId / deptId / divisionId / functionId
+所謂實際的sectId, 表示某個人的sectId != deptId, 所謂實際的deptId, 表示某個人的deptId != divisionId, 以此類推
+每個實際的sectId / deptId / divisionId / functionId都會有一個主管
+一個deptId的主管, 他的sectId == deptId, 以此類推
+要先從實際的sectId的主管開始找, 才能找到實際的deot的主管
+若想要分別找出sectId / deptId / divisionId / functionId 的主管是誰, 可以用golang把user讀進來, 再去找嗎?
+
+通常都需要從sect主管找起，例如
+{ "sectId": "SA", "deptId": "DA", "divisionId": "DDA", "functionId": "FA", "userId": "UA", "supervisor": "UB" } 
+可以先找出SA的主管（看所有SA!=DA的人，統計他們的supervisor，票數比較多的人是主管），找出sect主管後，可以看這個sect主管，若他的deptid!=divisionid 則他的supervisor 就是DA的主管，以此類推
+此外有一些例外
+例如可能有一群人sectId ==deptId==divisionId!=functionId,{ "sectId": "DDB", "deptId": "DDB", "divisionId": "DDB", "functionId": "FA", "userId": "UF", "supervisor": "UG" } 
+這種case代表沒有實際的sect dept ,所以無法直接從sect推出division 主管是誰，必須直接統計這一群人並找出division 主管
