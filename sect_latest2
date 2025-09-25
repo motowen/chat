@@ -1,0 +1,126 @@
+db.users.aggregate([
+  // Step1: 建立 supervisor chain
+  {
+    $graphLookup: {
+      from: "users",
+      startWith: "$supervisor",
+      connectFromField: "supervisor",
+      connectToField: "userId",
+      as: "supChain",
+      depthField: "level"
+    }
+  },
+
+  // Step2: 找四層主管
+  {
+    $addFields: {
+      sectSupervisor: {
+        $let: {
+          vars: {
+            diff: {
+              $filter: {
+                input: "$supChain",
+                as: "sup",
+                cond: { $ne: ["$$sup.sectId", "$sectId"] }
+              }
+            }
+          },
+          in: {
+            $ifNull: [
+              { $first: "$$diff.userId" },  // 找到不同 sectId 的上級
+              "$userId"                     // 沒找到就自己
+            ]
+          }
+        }
+      },
+      deptSupervisor: {
+        $let: {
+          vars: {
+            diff: {
+              $filter: {
+                input: "$supChain",
+                as: "sup",
+                cond: { $ne: ["$$sup.deptId", "$deptId"] }
+              }
+            }
+          },
+          in: {
+            $ifNull: [
+              { $first: "$$diff.userId" },
+              "$userId"
+            ]
+          }
+        }
+      },
+      divisionSupervisor: {
+        $let: {
+          vars: {
+            diff: {
+              $filter: {
+                input: "$supChain",
+                as: "sup",
+                cond: { $ne: ["$$sup.divisionId", "$divisionId"] }
+              }
+            }
+          },
+          in: {
+            $ifNull: [
+              { $first: "$$diff.userId" },
+              "$userId"
+            ]
+          }
+        }
+      },
+      functionSupervisor: {
+        $let: {
+          vars: {
+            diff: {
+              $filter: {
+                input: "$supChain",
+                as: "sup",
+                cond: { $ne: ["$$sup.functionId", "$functionId"] }
+              }
+            }
+          },
+          in: {
+            $ifNull: [
+              { $first: "$$diff.userId" },
+              "$userId"
+            ]
+          }
+        }
+      }
+    }
+  },
+
+  // Step3: 聚合成部門報表
+  {
+    $group: {
+      _id: {
+        sectId: "$sectId",
+        deptId: "$deptId",
+        divisionId: "$divisionId",
+        functionId: "$functionId"
+      },
+      sectSupervisor: { $addToSet: "$sectSupervisor" },
+      deptSupervisor: { $addToSet: "$deptSupervisor" },
+      divisionSupervisor: { $addToSet: "$divisionSupervisor" },
+      functionSupervisor: { $addToSet: "$functionSupervisor" }
+    }
+  },
+
+  // Step4: 輸出整齊格式
+  {
+    $project: {
+      _id: 0,
+      sectId: "$_id.sectId",
+      sectSupervisor: 1,
+      deptId: "$_id.deptId",
+      deptSupervisor: 1,
+      divisionId: "$_id.divisionId",
+      divisionSupervisor: 1,
+      functionId: "$_id.functionId",
+      functionSupervisor: 1
+    }
+  }
+])
