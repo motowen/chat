@@ -1,0 +1,74 @@
+db.users.aggregate([
+  // Step1: 選定特定 userId
+  { $match: { userId: "UZ" } },  // <== 這裡換成你要查的 userId
+
+  // Step2: 找到 supervisor chain
+  {
+    $graphLookup: {
+      from: "users",
+      startWith: "$supervisor",
+      connectFromField: "supervisor",
+      connectToField: "userId",
+      as: "supChain",
+      depthField: "level"
+    }
+  },
+
+  // Step3: 找出四層主管（最近的不同層主管）
+  {
+    $addFields: {
+      sectSupervisor: {
+        $first: {
+          $filter: {
+            input: "$supChain",
+            as: "sup",
+            cond: { $ne: ["$$sup.sectId", "$sectId"] }
+          }
+        }
+      },
+      deptSupervisor: {
+        $first: {
+          $filter: {
+            input: "$supChain",
+            as: "sup",
+            cond: { $ne: ["$$sup.deptId", "$deptId"] }
+          }
+        }
+      },
+      divisionSupervisor: {
+        $first: {
+          $filter: {
+            input: "$supChain",
+            as: "sup",
+            cond: { $ne: ["$$sup.divisionId", "$divisionId"] }
+          }
+        }
+      },
+      functionSupervisor: {
+        $first: {
+          $filter: {
+            input: "$supChain",
+            as: "sup",
+            cond: { $ne: ["$$sup.functionId", "$functionId"] }
+          }
+        }
+      }
+    }
+  },
+
+  // Step4: 輸出整齊結果
+  {
+    $project: {
+      _id: 0,
+      userId: 1,
+      sectId: 1,
+      deptId: 1,
+      divisionId: 1,
+      functionId: 1,
+      sectSupervisor: "$sectSupervisor.userId",
+      deptSupervisor: "$deptSupervisor.userId",
+      divisionSupervisor: "$divisionSupervisor.userId",
+      functionSupervisor: "$functionSupervisor.userId"
+    }
+  }
+])
