@@ -98,3 +98,59 @@ db.users.aggregate([
     }
   }
 ])
+
+
+✅ 正確的部分
+Step1 $graphLookup
+用 startWith: "$supervisor" 建出直屬上級 → 上級的上級 → … 的 chain。
+as: "supChain" 收到的陣列會依照 depthField 由近到遠排序（level:0 是直屬上司）。
+→ 這裡是對的。
+Step2 $addFields + $filter
+$filter 過濾出「在該層級屬性不同的 supervisor」。
+$first 會取到最近的符合者 → 就是你想要的「那一層主管」。
+→ 這個邏輯正確。
+Step3 $project
+避免輸出整個 supervisor 文件，只保留 userId。
+→ 做法正確。
+Step4 $group
+以部門 (sectId / deptId / divisionId / functionId) 為 key，把各 supervisor 集合起來。
+→ 這樣可以得到「該部門的主管列表」。
+Step5 $project
+輸出成乾淨的格式。
+→ 沒問題。
+⚠️ 潛在問題 / 改進建議
+$filter + $first 的安全性
+如果 supChain 裡所有人的 sectId 都等於當前 user 的 sectId，$filter 會回傳空陣列 → $first 會是 null。
+這在「最高主管」的情境會發生。
+→ 建議加上 fallback（例如用 $ifNull 回傳 supChain 最後一個 userId 作為最高主管）。
+範例修改：
+sectSupervisor: {
+  $let: {
+    vars: {
+      diff: {
+        $filter: {
+          input: "$supChain",
+          as: "sup",
+          cond: { $ne: ["$$sup.sectId", "$sectId"] }
+        }
+      }
+    },
+    in: {
+      $ifNull: [{ $first: "$$diff" }, { $last: "$supChain" }]
+    }
+  }
+}
+$group + $addToSet
+這裡會產生「陣列」，即使只有一個主管也會輸出成 ["UA"]。
+如果你需要單一主管（而不是陣列），要改成 $first（前提是保證唯一）。
+範例：
+sectSupervisor: { $first: "$sectSupervisor.userId" },
+效能問題
+$graphLookup 在大 user collection（尤其是樹狀層級深的）會很重。
+若這個查詢要頻繁跑，可以考慮 預計算 supervisor chain 存在文件裡（例如 allSupervisors: ["UB","UC",...]），查詢會快很多。
+🎯 總結
+你的程式在邏輯上能找出各層主管，核心思路是正確的。
+不過要注意：
+最高主管會變成 null（建議加 fallback）。
+輸出 supervisor 會是陣列（是否要改成單一值要看需求）。
+效能（如果資料量大，建議改成 denormalization / 預先寫入 allSupervisors）。
