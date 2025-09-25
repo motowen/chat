@@ -1,0 +1,324 @@
+https://chatgpt.com/share/68d5cd73-4870-8010-b084-96482f66a65f
+
+package main
+
+import (
+	"fmt"
+)
+
+// User 模擬資料
+type User struct {
+	UserID      string
+	Supervisor  string
+	SectID      string
+	DeptID      string
+	DivisionID  string
+	FunctionID  string
+}
+
+// cache key = 層級:ID, value = (supervisorID, 票數)
+type SupervisorInfo struct {
+	SupervisorID string
+	Votes        int
+}
+
+var supervisorCache = make(map[string]SupervisorInfo)
+
+// 統計票數最多的 supervisor
+func majoritySupervisor(users []User, filter func(User) bool) SupervisorInfo {
+	counter := make(map[string]int)
+	for _, u := range users {
+		if filter(u) && u.Supervisor != "" {
+			counter[u.Supervisor]++
+		}
+	}
+	maxCount := -1
+	winner := ""
+	for sup, cnt := range counter {
+		if cnt > maxCount {
+			maxCount = cnt
+			winner = sup
+		}
+	}
+	return SupervisorInfo{SupervisorID: winner, Votes: maxCount}
+}
+
+// 遞迴找主管（含 cache 和票數）
+func findSupervisor(users []User, level, id string) SupervisorInfo {
+	cacheKey := level + ":" + id
+	if supInfo, ok := supervisorCache[cacheKey]; ok {
+		return supInfo
+	}
+
+	var group []User
+	for _, u := range users {
+		switch level {
+		case "sect":
+			if u.SectID == id {
+				group = append(group, u)
+			}
+		case "dept":
+			if u.DeptID == id {
+				group = append(group, u)
+			}
+		case "division":
+			if u.DivisionID == id {
+				group = append(group, u)
+			}
+		case "function":
+			if u.FunctionID == id {
+				group = append(group, u)
+			}
+		}
+	}
+
+	if len(group) == 0 {
+		supInfo := SupervisorInfo{"", 0}
+		supervisorCache[cacheKey] = supInfo
+		return supInfo
+	}
+
+	// 判斷層級是否實際存在
+	exists := false
+	for _, u := range group {
+		switch level {
+		case "sect":
+			if u.SectID != u.DeptID {
+				exists = true
+			}
+		case "dept":
+			if u.DeptID != u.DivisionID {
+				exists = true
+			}
+		case "division":
+			if u.DivisionID != u.FunctionID {
+				exists = true
+			}
+		case "function":
+			exists = true
+		}
+	}
+
+	if exists {
+		supInfo := majoritySupervisor(group, func(u User) bool { return true })
+		if supInfo.SupervisorID == "" {
+			supervisorCache[cacheKey] = supInfo
+			return supInfo
+		}
+
+		// 找出 supervisor 的資料
+		var supUser *User
+		for _, u := range users {
+			if u.UserID == supInfo.SupervisorID {
+				supUser = &u
+				break
+			}
+		}
+		if supUser == nil {
+			supervisorCache[cacheKey] = supInfo
+			return supInfo
+		}
+
+		// 往上層遞迴
+		switch level {
+		case "sect":
+			if supUser.DeptID != supUser.DivisionID {
+				supInfo = findSupervisor(users, "dept", supUser.DeptID)
+			}
+		case "dept":
+			if supUser.DivisionID != supUser.FunctionID {
+				supInfo = findSupervisor(users, "division", supUser.DivisionID)
+			}
+		case "division":
+			supInfo = findSupervisor(users, "function", supUser.FunctionID)
+		case "function":
+		}
+
+		supervisorCache[cacheKey] = supInfo
+		return supInfo
+	}
+
+	// 例外情況
+	switch level {
+	case "sect":
+		return findSupervisor(users, "dept", group[0].DeptID)
+	case "dept":
+		return findSupervisor(users, "division", group[0].DivisionID)
+	case "division":
+		return findSupervisor(users, "function", group[0].FunctionID)
+	case "function":
+		supInfo := majoritySupervisor(group, func(u User) bool { return true })
+		supervisorCache[cacheKey] = supInfo
+		return supInfo
+	}
+
+	supInfo := SupervisorInfo{"", 0}
+	supervisorCache[cacheKey] = supInfo
+	return supInfo
+}
+
+func main() {
+	users := []User{
+		{"UA", "UB", "SA", "DA", "DDA", "FA"},
+		{"UC", "UB", "SA", "DA", "DDA", "FA"},
+		{"UD", "UB", "SA", "DA", "DDA", "FA"},
+		{"UE", "UC", "SA", "DA", "DDA", "FA"},
+
+		{"UF", "UG", "SB", "DB", "DDB", "FB"},
+		{"UH", "UG", "SB", "DB", "DDB", "FB"},
+		{"UI", "UG", "SB", "DB", "DDB", "FB"},
+		{"UJ", "UH", "SB", "DB", "DDB", "FB"},
+
+		{"UK", "UL", "DDB", "DDB", "DDB", "FC"},
+		{"UM", "UL", "DDB", "DDB", "DDB", "FC"},
+		{"UN", "UL", "DDB", "DDB", "DDB", "FC"},
+		{"UO", "UP", "DDB", "DDB", "DDB", "FC"},
+	}
+
+	fmt.Println("=== 每個 user 的完整主管鏈 + 票數 ===")
+	for _, u := range users {
+		sectSup := findSupervisor(users, "sect", u.SectID)
+		deptSup := findSupervisor(users, "dept", u.DeptID)
+		divSup := findSupervisor(users, "division", u.DivisionID)
+		funcSup := findSupervisor(users, "function", u.FunctionID)
+
+		fmt.Printf("User %s -> Sect:%s(%d) Dept:%s(%d) Division:%s(%d) Function:%s(%d)\n",
+			u.UserID,
+			sectSup.SupervisorID, sectSup.Votes,
+			deptSup.SupervisorID, deptSup.Votes,
+			divSup.SupervisorID, divSup.Votes,
+			funcSup.SupervisorID, funcSup.Votes,
+		)
+	}
+}
+
+
+非遞迴：
+package main
+
+import (
+	"fmt"
+)
+
+// User 模擬資料
+type User struct {
+	UserID      string
+	Supervisor  string
+	SectID      string
+	DeptID      string
+	DivisionID  string
+	FunctionID  string
+}
+
+// 找出某一群人的主管（統計 supervisor 出現次數，取最多的）
+func findSupervisor(users []User, filter func(User) bool) string {
+	counter := make(map[string]int)
+	for _, u := range users {
+		if filter(u) && u.Supervisor != "" {
+			counter[u.Supervisor]++
+		}
+	}
+	var maxSupervisor string
+	maxCount := -1
+	for sup, cnt := range counter {
+		if cnt > maxCount {
+			maxCount = cnt
+			maxSupervisor = sup
+		}
+	}
+	return maxSupervisor
+}
+
+func main() {
+	// 測試資料
+	users := []User{
+		// === Sect A ===
+		{"UA", "UB", "SA", "DA", "DDA", "FA"},
+		{"UC", "UB", "SA", "DA", "DDA", "FA"},
+		{"UD", "UB", "SA", "DA", "DDA", "FA"},
+		{"UE", "UC", "SA", "DA", "DDA", "FA"}, // 少數例外 supervisor
+
+		// === Sect B ===
+		{"UF", "UG", "SB", "DB", "DDB", "FB"},
+		{"UH", "UG", "SB", "DB", "DDB", "FB"},
+		{"UI", "UG", "SB", "DB", "DDB", "FB"},
+		{"UJ", "UH", "SB", "DB", "DDB", "FB"}, // 少數例外 supervisor
+
+		// === Division 特例 === (sect=dept=division)
+		{"UK", "UL", "DDB", "DDB", "DDB", "FC"},
+		{"UM", "UL", "DDB", "DDB", "DDB", "FC"},
+		{"UN", "UL", "DDB", "DDB", "DDB", "FC"},
+		{"UO", "UP", "DDB", "DDB", "DDB", "FC"}, // 少數例外 supervisor
+	}
+
+	// === Step1: 找出所有實際存在的 Sect (sect!=dept) ===
+	sectMap := make(map[string]string)
+	for _, u := range users {
+		if u.SectID != u.DeptID {
+			sid := u.SectID
+			if _, ok := sectMap[sid]; !ok {
+				sectMap[sid] = findSupervisor(users, func(x User) bool {
+					return x.SectID == sid && x.SectID != x.DeptID
+				})
+			}
+		}
+	}
+
+	// === Step2: 找出所有實際存在的 Dept (dept!=division) ===
+	deptMap := make(map[string]string)
+	for _, u := range users {
+		if u.DeptID != u.DivisionID {
+			did := u.DeptID
+			if _, ok := deptMap[did]; !ok {
+				deptMap[did] = findSupervisor(users, func(x User) bool {
+					return x.DeptID == did && x.DeptID != x.DivisionID
+				})
+			}
+		}
+	}
+
+	// === Step3: 找出所有實際存在的 Division (division!=function) ===
+	divisionMap := make(map[string]string)
+	for _, u := range users {
+		if u.DivisionID != u.FunctionID {
+			vid := u.DivisionID
+			if _, ok := divisionMap[vid]; !ok {
+				divisionMap[vid] = findSupervisor(users, func(x User) bool {
+					return x.DivisionID == vid && x.DivisionID != x.FunctionID
+				})
+			}
+		}
+	}
+
+	// === Step4: 找出所有 Function 層主管 ===
+	functionMap := make(map[string]string)
+	for _, u := range users {
+		fid := u.FunctionID
+		if _, ok := functionMap[fid]; !ok {
+			functionMap[fid] = findSupervisor(users, func(x User) bool {
+				return x.FunctionID == fid
+			})
+		}
+	}
+
+	// === 輸出結果 ===
+	fmt.Println("=== Sect Supervisors ===")
+	for sid, sup := range sectMap {
+		fmt.Printf("Sect %s -> Supervisor %s\n", sid, sup)
+	}
+
+	fmt.Println("\n=== Dept Supervisors ===")
+	for did, sup := range deptMap {
+		fmt.Printf("Dept %s -> Supervisor %s\n", did, sup)
+	}
+
+	fmt.Println("\n=== Division Supervisors ===")
+	for vid, sup := range divisionMap {
+		fmt.Printf("Division %s -> Supervisor %s\n", vid, sup)
+	}
+
+	fmt.Println("\n=== Function Supervisors ===")
+	for fid, sup := range functionMap {
+		fmt.Printf("Function %s -> Supervisor %s\n", fid, sup)
+	}
+}
